@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import AppLayout from '../components/layout/AppLayout';
 import { motion } from 'framer-motion';
-import { CloudSun, Sun, CloudRain, Wind, Droplets, Thermometer, Compass, Lightbulb } from 'lucide-react';
+import { CloudSun, Sun, CloudRain, Wind, Droplets, Thermometer, Compass, Lightbulb, MapPin } from 'lucide-react';
 import apiClient from '../api/client';
+import { useLocation } from '../contexts/LocationContext';
 
 const Weather = () => {
+  const { userLocation, lat, lon } = useLocation();
   const [current, setCurrent] = useState({
     temp: "29°C",
     minMax: "24°C / 32°C",
@@ -104,17 +106,18 @@ const Weather = () => {
   };
 
   useEffect(() => {
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        fetchWeatherData(latitude, longitude);
-      },
-      (error) => {
-        console.warn("Geolocation failed. Fallback to default.", error);
-        fetchWeatherData(22.973, 78.656); // Fallback to central India
+    if (lat && lon) {
+      fetchWeatherData(lat, lon);
+    } else {
+      const savedLat = localStorage.getItem('user_lat');
+      const savedLon = localStorage.getItem('user_lon');
+      if (savedLat && savedLon) {
+        fetchWeatherData(parseFloat(savedLat), parseFloat(savedLon));
+      } else {
+        fetchWeatherData(21.1702, 72.8311);
       }
-    );
-  }, []);
+    }
+  }, [lat, lon]);
 
   return (
     <AppLayout>
@@ -139,7 +142,10 @@ const Weather = () => {
             <div className="flex justify-between items-start">
               <div>
                 <h3 className="font-extrabold text-sm text-gray-800 dark:text-white">Current Weather</h3>
-                <p className="text-xs text-gray-400 mt-1">Central Valley Area</p>
+                <p className="text-xs text-primary dark:text-green-400 font-bold mt-1 flex items-center gap-1">
+                  <MapPin size={11} />
+                  <span>{userLocation || 'Local Farm Region'}</span>
+                </p>
               </div>
               <span className="text-4xl">☀️</span>
             </div>

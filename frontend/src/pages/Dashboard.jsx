@@ -1,21 +1,29 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import AppLayout from '../components/layout/AppLayout';
 import { useAuth } from '../contexts/AuthContext';
-import { Tractor, Sprout, Wind, MapPin, Sparkles, TrendingUp, AlertTriangle, Lightbulb, Calendar, ArrowRight } from 'lucide-react';
+import { useLocation } from '../contexts/LocationContext';
+import { Tractor, Sprout, Wind, MapPin, Sparkles, TrendingUp, AlertTriangle, Lightbulb, Calendar, ArrowRight, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import apiClient from '../api/client';
 
 const Dashboard = () => {
   const { profile } = useAuth();
+  const { userLocation, lat, lon, locationReady, detecting, refreshLocation, updateLocationManually } = useLocation();
   const navigate = useNavigate();
 
-  const [weather, setWeather] = useState({
-    temp: "--°C",
-    condition: "Loading weather...",
-    humidity: "--%",
-    wind: "-- km/h",
-    loading: true
+  const [weather, setWeather] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('dashboard_weather');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {}
+    return {
+      temp: "--°C",
+      condition: "Loading weather...",
+      humidity: "--%",
+      wind: "-- km/h",
+      loading: true
+    };
   });
 
   const [marketPrices, setMarketPrices] = useState([]);
@@ -29,7 +37,6 @@ const Dashboard = () => {
     { title: "Syncing calendar...", date: "Retrieving active tasks..." }
   ]);
 
-  const [userLocation, setUserLocation] = useState("Detecting location...");
   const [isEditingLocation, setIsEditingLocation] = useState(false);
   const [locationInput, setLocationInput] = useState("");
 
@@ -57,17 +64,17 @@ const Dashboard = () => {
       const fmtHumidity = typeof rawHumidity === 'number' ? `${rawHumidity}%` : (rawHumidity && String(rawHumidity).includes('%') ? rawHumidity : `${rawHumidity}%`);
       const fmtWind = typeof rawWind === 'number' ? `${rawWind} km/h` : (rawWind && String(rawWind).includes('h') ? rawWind : `${rawWind} km/h`);
 
-      setWeather({
+      const weatherPayload = {
         temp: fmtTemp,
         condition: rawCondition,
         humidity: fmtHumidity,
         wind: fmtWind,
         loading: false
-      });
-
-      if (data.location) {
-        setUserLocation(prev => (prev === "Detecting location..." ? data.location : prev));
-      }
+      };
+      setWeather(weatherPayload);
+      try {
+        sessionStorage.setItem('dashboard_weather', JSON.stringify(weatherPayload));
+      } catch (e) {}
 
       if (data.farming_advice) {
         const adv = data.farming_advice;
@@ -87,68 +94,15 @@ const Dashboard = () => {
   const handleLocationSubmit = async (val) => {
     setIsEditingLocation(false);
     if (!val.trim()) return;
-    setUserLocation(val);
-    try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val)}&format=json&limit=1`);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        const lat = parseFloat(data[0].lat);
-        const lon = parseFloat(data[0].lon);
-        console.log("Geocoded search location:", data[0].display_name, lat, lon);
-        fetchWeather(lat, lon);
-      } else {
-        fetchWeather(21.1702, 72.8311);
-      }
-    } catch (e) {
-      console.error("Geocoding failed:", e);
-      fetchWeather(21.1702, 72.8311);
-    }
+    await updateLocationManually(val);
   };
 
+  // Fetch weather when location is ready or changes
   useEffect(() => {
-    const detectLocation = async () => {
-      // 1. Try Browser Geolocation first (highly accurate GPS coordinates)
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const { latitude, longitude } = position.coords;
-          fetchWeather(latitude, longitude);
-          try {
-            const revRes = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&accept-language=en`);
-            const revData = await revRes.json();
-            if (revData && revData.address) {
-              const city = revData.address.city || revData.address.town || revData.address.village || revData.address.suburb || "Surat";
-              const state = revData.address.state || "Gujarat";
-              setUserLocation(`${city}, ${state}`);
-            }
-          } catch (e) {
-            console.error("Reverse geocoding failed:", e);
-            setUserLocation("Surat, GJ");
-          }
-        },
-        async (error) => {
-          console.warn("Browser Geolocation failed, trying IP Geolocation fallback:", error);
-          // 2. Fallback to IP Geolocation
-          try {
-            const ipRes = await fetch('https://ipapi.co/json/');
-            const ipData = await ipRes.json();
-            if (ipData && ipData.latitude && ipData.longitude) {
-              console.log("Detected location from IP:", ipData.city, ipData.region);
-              const cityState = ipData.city ? `${ipData.city}, ${ipData.region_code || ipData.region || ''}` : "Surat";
-              setUserLocation(cityState);
-              fetchWeather(ipData.latitude, ipData.longitude);
-            } else {
-              throw new Error("Invalid IP geo data");
-            }
-          } catch (ipErr) {
-            console.error("IP Geolocation failed. defaulting to Surat:", ipErr);
-            fetchWeather(21.1702, 72.8311); // Surat coordinates
-            setUserLocation("Surat, Gujarat");
-          }
-        }
-      );
-    };
-    detectLocation();
-  }, []);
+    if (locationReady && lat && lon) {
+      fetchWeather(lat, lon);
+    }
+  }, [locationReady, lat, lon]);
 
   useEffect(() => {
     let isMounted = true;
@@ -266,8 +220,8 @@ const Dashboard = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 text-xs font-bold uppercase bg-primary/10 text-primary dark:bg-primary/20 dark:text-green-400 px-4 py-2.5 rounded-xl border border-primary/20">
-            <MapPin size={14} className="shrink-0" />
+          <div className="flex items-center gap-2 text-xs font-bold uppercase bg-primary/10 text-primary dark:bg-primary/20 dark:text-green-400 px-4 py-2 rounded-xl border border-primary/20">
+            <MapPin size={14} className={`shrink-0 ${detecting ? 'animate-pulse text-amber-500' : ''}`} />
             {isEditingLocation ? (
               <input
                 type="text"
@@ -277,20 +231,30 @@ const Dashboard = () => {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     handleLocationSubmit(locationInput);
+                  } else if (e.key === 'Escape') {
+                    setIsEditingLocation(false);
                   }
                 }}
-                className="bg-transparent border-none outline-none text-xs font-bold uppercase w-32 text-primary dark:text-green-400"
+                className="bg-transparent border-none outline-none text-xs font-bold uppercase w-36 text-primary dark:text-green-400"
                 autoFocus
               />
             ) : (
               <span
-                onClick={() => { setIsEditingLocation(true); setLocationInput(userLocation); }}
-                className="cursor-pointer hover:underline"
-                title="Click to change location"
+                onClick={() => { setIsEditingLocation(true); setLocationInput(userLocation && userLocation !== 'Detecting location...' ? userLocation : ''); }}
+                className="cursor-pointer hover:underline truncate max-w-[180px]"
+                title="Click to edit location"
               >
-                {userLocation}
+                {detecting ? 'Detecting GPS...' : (userLocation || 'Set Location')}
               </span>
             )}
+            <button
+              onClick={refreshLocation}
+              disabled={detecting}
+              className="ml-1 p-1 hover:bg-primary/15 rounded-md transition-colors disabled:opacity-50"
+              title="Detect GPS location"
+            >
+              <RefreshCw size={12} className={detecting ? 'animate-spin' : ''} />
+            </button>
           </div>
         </div>
 
